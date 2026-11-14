@@ -86,19 +86,7 @@ static struct toa_ip6_sk_lock toa_ip6_sk_lock;
 static struct proto_ops *inet6_stream_ops_p = NULL;
 static struct inet_connection_sock_af_ops *ipv6_specific_p = NULL;
 
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(4,4,1)
-typedef struct sock *(*syn_recv_sock_func_pt)(
-        const struct sock *sk, struct sk_buff *skb,
-        struct request_sock *req,
-        struct dst_entry *dst,
-        struct request_sock *req_unhash,
-        bool *own_req);
-#else
-typedef struct sock *(*syn_recv_sock_func_pt)(
-        struct sock *sk, struct sk_buff *skb,
-        struct request_sock *req,
-        struct dst_entry *dst);
-#endif
+typedef typeof(((struct inet_connection_sock_af_ops *)0)->syn_recv_sock) syn_recv_sock_func_pt;
 static syn_recv_sock_func_pt tcp_v6_syn_recv_sock_org_pt = NULL;
 #endif
 
@@ -239,6 +227,12 @@ init_toa_ip6(void)
 {
     int i;
 
+    toa_ip6_sk_lock.lock = alloc_percpu(spinlock_t);
+    if (toa_ip6_sk_lock.lock == NULL) {
+        TOA_INFO("fail to alloc per cpu ip6's destruct lock\n");
+        return -ENOMEM;
+    }
+
     for_each_possible_cpu(i) {
         spinlock_t *lock;
 
@@ -249,12 +243,6 @@ init_toa_ip6(void)
     for (i = 0; i < TOA_IP6_TAB_SIZE; ++i) {
         INIT_LIST_HEAD(&__toa_ip6_list_tab[i].toa_ip6_head);
         spin_lock_init(&__toa_ip6_list_tab[i].lock);
-    }
-
-    toa_ip6_sk_lock.lock = alloc_percpu(spinlock_t);
-    if (toa_ip6_sk_lock.lock == NULL) {
-        TOA_INFO("fail to alloc per cpu ip6's destruct lock\n");
-        return -ENOMEM;
     }
 
     return 0;
@@ -730,7 +718,13 @@ get_kernel_ipv6_symbol(void)
  * @param dst [out] route cache entry
  * @return NULL if fail new socket if succeed.
  */
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(4,4,1)
+#ifdef TOA_CHILD_INIT
+static struct sock *
+tcp_v4_syn_recv_sock_toa(const struct sock *sk, struct sk_buff *skb,
+            struct request_sock *req, struct dst_entry *dst,
+            struct request_sock *req_unhash, bool *own_req,
+            void (*opt_child_init)(struct sock *, const struct sock *))
+#elif LINUX_VERSION_CODE >= KERNEL_VERSION(4,4,1)
 static struct sock *
 tcp_v4_syn_recv_sock_toa(const struct sock *sk, struct sk_buff *skb,
             struct request_sock *req,
@@ -749,7 +743,9 @@ tcp_v4_syn_recv_sock_toa(struct sock *sk, struct sk_buff *skb,
     TOA_DBG("tcp_v4_syn_recv_sock_toa called\n");
 
     /* call orginal one */
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(4,4,1)
+#ifdef TOA_CHILD_INIT
+    newsock = tcp_v4_syn_recv_sock(sk, skb, req, dst, req_unhash, own_req, opt_child_init);
+#elif LINUX_VERSION_CODE >= KERNEL_VERSION(4,4,1)
     newsock = tcp_v4_syn_recv_sock(sk, skb, req, dst, req_unhash, own_req);
 #else
     newsock = tcp_v4_syn_recv_sock(sk, skb, req, dst);
@@ -784,7 +780,13 @@ tcp_v4_syn_recv_sock_toa(struct sock *sk, struct sk_buff *skb,
 }
 
 #ifdef TOA_IPV6_ENABLE
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(4,4,1)
+#ifdef TOA_CHILD_INIT
+static struct sock *
+tcp_v6_syn_recv_sock_toa(const struct sock *sk, struct sk_buff *skb,
+             struct request_sock *req, struct dst_entry *dst,
+             struct request_sock *req_unhash, bool *own_req,
+             void (*opt_child_init)(struct sock *, const struct sock *))
+#elif LINUX_VERSION_CODE >= KERNEL_VERSION(4,4,1)
 static struct sock *
 tcp_v6_syn_recv_sock_toa(const struct sock *sk, struct sk_buff *skb,
              struct request_sock *req,
@@ -803,7 +805,10 @@ tcp_v6_syn_recv_sock_toa(struct sock *sk, struct sk_buff *skb,
     TOA_DBG("tcp_v6_syn_recv_sock_toa called\n");
 
     /* call orginal one */
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(4,4,1)
+#ifdef TOA_CHILD_INIT
+    newsock = tcp_v6_syn_recv_sock_org_pt(sk, skb, req, dst, req_unhash,
+            own_req, opt_child_init);
+#elif LINUX_VERSION_CODE >= KERNEL_VERSION(4,4,1)
     newsock = tcp_v6_syn_recv_sock_org_pt(sk, skb, req, dst, req_unhash,
             own_req);
 #else
